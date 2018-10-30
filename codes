@@ -1,0 +1,373 @@
+/*
+ ============================================================================
+ Name        : PROJE.c
+ Author      : Berke Uğurlu
+ Version     : 1.0
+ Copyright   : Everybody who wants it can use it:)
+ Description : This project controls user equipment (in this case I controlled Sixfab NB-IoT EVB BC95-B20)
+ 	 	 	   via sending commands in it. After controlling the response of the user equipment, it continues
+ 	 	 	   to send second command
+ ============================================================================
+//libraries to include
+#include <stdlib.h>
+#include <windows.h>
+#include <tchar.h>
+#include <stdio.h>
+#include <string.h>
+#include <tchar.h>
+#include <assert.h>
+
+//this method shows the specified port specification
+//It takes DCB dcb as parameter
+//It returns void
+void WritePortSpecs(DCB dcb){
+	printf("BaudRate = %ld, ByteSize = %d Parity = %d, StopBits = %d, fNull = %d \n",
+			dcb.BaudRate,
+			dcb.ByteSize,
+			dcb.Parity,
+			dcb.StopBits,
+			dcb.fNull);
+}
+
+//main method
+int main( int argc, TCHAR *argv[] )
+{
+   DCB dcb;
+   HANDLE handle;
+
+   OVERLAPPED o;
+   OVERLAPPED o2;
+
+   CHAR *pcCommPort = "COM2";
+   char  SerialBuffer[256] ="";
+   char  tChar;
+
+   DWORD NoBytesRead = 0;
+   DWORD dwNOFReadedBytes = 0;
+   DWORD dwNOFWroteBytes = 0;
+   DWORD dwNOFWroteBytes2 = 0;
+   DWORD dwEvtMask;
+
+   BOOL fileCreated;
+   BOOL setTimeOut;
+   BOOL readCheck;
+   BOOL readCheck2;
+   BOOL writeCheck;
+   BOOL writeCheck2;
+   BOOL continueToSend = FALSE;
+
+
+   handle = CreateFileA( pcCommPort,
+		   GENERIC_READ | GENERIC_WRITE,
+		   		   NULL,
+		   		   NULL,
+		   		   OPEN_ALWAYS,
+				   FILE_ATTRIBUTE_NORMAL,
+		   		   NULL);
+
+   if (handle == INVALID_HANDLE_VALUE)
+   {
+       printf ("Invalid handle Value %ld.\n", GetLastError());
+       return (1);
+   }
+
+  // SecureZeroMemory(&dcb, sizeof(DCB));
+   dcb.DCBlength = sizeof(DCB);
+
+   fileCreated = GetCommState(handle, &dcb);
+
+   if (!fileCreated )
+   {
+      printf ("GetCommState error %ld.\n", GetLastError());
+      return (2);
+   }
+
+   dcb.BaudRate = CBR_9600;
+   dcb.ByteSize = 8;
+   dcb.Parity   = NOPARITY;
+   dcb.StopBits = ONESTOPBIT;
+   dcb.fNull = TRUE;
+
+   fileCreated = SetCommState(handle, &dcb);
+
+   if (!fileCreated)
+   {
+      printf ("SetCommState error %ld.\n", GetLastError());
+      return (3);
+   }
+
+   fileCreated = GetCommState(handle, &dcb);
+
+   if (!fileCreated)
+   {
+      printf ("GetCommState failed with error %ld.\n", GetLastError());
+      return (2);
+   }
+
+   printf (TEXT("Serial port %s successfully configured.\n"), pcCommPort);
+
+   WritePortSpecs(dcb);
+
+//determining timeouts of the program, program uses this timeouts to communicate
+//with the Sixfab NB-IoT EVB BC95-B20
+COMMTIMEOUTS timeOut = {0};
+	  timeOut.ReadIntervalTimeout = 50;
+	  timeOut.ReadTotalTimeoutMultiplier = 50;
+	  timeOut.ReadTotalTimeoutConstant = 10;
+	  timeOut.WriteTotalTimeoutMultiplier = 50;
+	  timeOut.WriteTotalTimeoutConstant = 10;
+
+setTimeOut = SetCommTimeouts(handle, &timeOut);
+
+if(setTimeOut){
+	printf("Timeouts are setted correctly\n\n");
+}
+else{
+	printf("Timeout Error, error code is %ld\n\n",GetLastError());
+}
+
+//---------------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------
+
+	if (fileCreated){
+
+			if(setTimeOut){
+				printf("STARTING TO WRITE\n");
+
+				//COMMANDS TO SEND
+				char writeBuff[] = "AT";
+				//char writeBuff[] = "AT+NCONFIG=AUTOCONNECT,FALSE";
+				//char writeBuff[] = "AT+NCONFIG=AUTOCONNECT,TRUE";
+
+			    writeCheck = WriteFile(handle, writeBuff, sizeof(writeBuff), &dwNOFWroteBytes, NULL);
+			    printf("writeCheck = %d\n",writeCheck);
+
+			    if(!writeCheck)
+			    {
+			        printf("Error\n");
+			        CloseHandle(handle);
+			        return 1;
+			    }
+			    else
+			   	{
+			   		printf("Write operation is okay\n");
+			   		printf("%ld bytes written\n", dwNOFWroteBytes);
+
+			   	}
+			    printf("ENDING TO WRITE\n\n");
+
+
+//---------------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------
+			    printf("STARTING TO READ\n");
+
+			    //setting the event mask, it is used for listening the response of the device
+			    BOOL fSuccess = SetCommMask(handle, EV_RXCHAR);
+
+			       if (!fSuccess)
+			       {
+			           // Handle the error.
+			           printf("SetCommMask error %ld.\n", GetLastError());
+			           return 1;
+			       }
+
+			       else{
+			    	   printf("setCommMask good\n");
+			       }
+
+
+			       // Create an event object for use by WaitCommEvent. The values that are used are
+			       // default values, I simply find these values on the Internet because It must be
+			       // done with this way.
+
+			       o.hEvent = CreateEvent(
+			           NULL,   // default security attributes
+			           TRUE,   // manual-reset event
+			           FALSE,  // not signaled
+			           NULL    // no name
+			            );
+
+			       // Initializing the rest of the OVERLAPPED structure to zero. The values that are used are
+			       // default values, I simply find these values on the Internet because It must be
+			       // done with this way.
+			       o.Internal = 0;
+			       o.InternalHigh = 0;
+			       o.Offset = 0;
+			       o.OffsetHigh = 0;
+
+			       assert(o.hEvent);
+
+			       printf("Last Error is %ld\n",GetLastError());
+
+			  //     while(1){
+
+			    	      BOOL waitingCom = WaitCommEvent(handle, EV_RXCHAR, NULL);
+
+			    		    printf("WaitCommEvent is %d\n",waitingCom);
+
+			    		    DWORD dwBytesRead;
+			    		    char readBuff[2];
+
+			    	      do{
+			    		        readCheck = ReadFile(handle, readBuff,sizeof(readBuff),&dwBytesRead , NULL);
+			    		        printf("readCheck = %d\n",readCheck);
+			    	      }
+			    	      while(dwBytesRead != 0);
+
+
+			            if(readCheck)
+			            {
+			    	         printf("Read operation is okay\n");
+			    	         printf("%ld bytes read\n",dwBytesRead);
+			            }
+			            else{
+			    	           printf("I/O error %ld\n",GetLastError());
+			            }
+			            printf("ENDING TO READ\n\n");
+
+
+			            if((strcmp(&readBuff[0], "O") == 0)){
+
+			    		         if((strcmp(&readBuff[1], "K") == 0)){
+			    			               continueToSend = TRUE;
+			    		}
+			   	}
+
+			    //I made it TRUE beacuse I have problem about readFileMethod
+			    continueToSend = TRUE;
+          
+//-------------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------------
+
+			    if(continueToSend){
+			    	printf("STARTING TO WRITE\n");
+
+			    	//COMMANDS TO SEND
+			    	//char writeBuff[] = "AT";
+			    	//char writeBuff[] = "AT+NCONFIG=AUTOCONNECT,FALSE";
+					  char writeBuff[] = "AT+NCONFIG=AUTOCONNECT,TRUE";
+
+			    	printf("sending commands second time\n");
+				    writeCheck2 = WriteFile(handle, writeBuff, sizeof(writeBuff), &dwNOFWroteBytes2, NULL);
+				    printf("writeCheck2 = %d\n",writeCheck2);
+
+				    if(!writeCheck2)
+				    {
+				    	printf("Error\n");
+			    		CloseHandle(handle);
+			    		return 1;
+			    	}
+				    else
+				    {
+				    	printf("Write operation is okay\n");
+				    	printf("%ld bytes written\n", dwNOFWroteBytes2);
+
+				    }
+				    printf("ENDING TO WRITE\n\n");
+
+
+//-------------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------------
+
+				    printf("STARTING TO READ\n");
+			    	BOOL fSuccess2 = SetCommMask(handle, EV_RXCHAR);
+
+				       if (!fSuccess2)
+				       {
+				           // Handle the error.
+				           printf("SetCommMask error %ld.\n", GetLastError());
+				           return 1;
+				       }
+
+				       else{
+				    	   printf("setCommMask good\n");
+				       }
+
+				       // Create an event object for use by WaitCommEvent.
+
+
+
+				       o2.hEvent = CreateEvent(
+				           NULL,   // default security attributes
+				           TRUE,   // manual-reset event
+				           FALSE,  // not signaled
+				           NULL    // no name
+				            );
+
+
+				       //Initializing the rest of the OVERLAPPED structure to zero.
+				       o2.Internal = 0;
+				       o2.InternalHigh = 0;
+				       o2.Offset = 0;
+				       o2.OffsetHigh = 0;
+
+				       assert(o2.hEvent);
+
+				       printf("Last Error is %ld\n",GetLastError());
+
+
+				  //     while(1){
+
+				    	   BOOL waitingCom2 = WaitCommEvent(handle, EV_RXCHAR, NULL);
+
+				    		   printf("WaitCommEvent is %d\n",waitingCom2);
+
+
+				    		   DWORD dwBytesRead2;
+				    		   char readBuff2[2];
+
+				    //if (waitingCom2)
+				    	//{
+
+				    	   do{
+
+				    		   readCheck2 = ReadFile(handle, readBuff,sizeof(readBuff2),&dwBytesRead2 , NULL);
+				    		   printf("readCheck2 = %d\n",readCheck2);
+
+				    	   }
+				    	   while(dwBytesRead2 != 0);
+				    	//}
+
+				     if(readCheck2)
+				     {
+				    	 printf("%d bytes read\n",dwBytesRead2);
+
+				     }
+
+
+				    else
+				    {
+				         printf("I/O error %ld\n",GetLastError());
+				    }
+
+				    printf("ENDING TO READ\n");
+
+
+				    if((strcmp(&readBuff2[0], "O") == 1)){
+
+				    		if((strcmp(&readBuff2[1], "K") == 1)){
+				    			continueToSend = TRUE;
+				    		}
+				   	}
+
+			    }
+
+
+			}
+	}
+
+	if(CloseHandle(handle)){
+		printf("File handle closed successfully\n");
+
+	}
+	else{
+		printf("Can't close the file handle, error code is %ld",GetLastError());
+	}
+
+
+	return 0;
+}
+
+
+//-----------------------------------------------------------------------------------------------------
+//-----------------------------------------------------------------------------------------------------
